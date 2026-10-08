@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Demo USD (DUSD) dApp</title>
+  <style>
+    *{box-sizing:border-box} body{margin:0;font-family:Arial,sans-serif;background:#f5f7fb;color:#172033}
+    .wrap{max-width:620px;margin:0 auto;padding:28px 16px}.card{background:#fff;border-radius:18px;padding:22px;margin:14px 0;box-shadow:0 5px 25px #00000012}
+    h1{margin:0 0 6px;font-size:26px}.muted{color:#667085;font-size:14px}.badge{display:inline-block;padding:5px 9px;border-radius:999px;background:#fff3cd;color:#7a5b00;font-size:12px;font-weight:700}
+    label{display:block;font-size:13px;font-weight:700;margin:16px 0 7px} input{width:100%;padding:12px;border:1px solid #d9dee8;border-radius:10px;font-size:14px}
+    button{width:100%;border:0;border-radius:11px;padding:13px;margin-top:12px;font-size:15px;font-weight:700;cursor:pointer;background:#111827;color:#fff}
+    button.secondary{background:#eef1f6;color:#172033}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.value{font-size:22px;font-weight:700;margin-top:6px;word-break:break-all}
+    #status{white-space:pre-wrap;font-size:13px;color:#475467;margin-top:12px}.small{font-size:12px;color:#667085;word-break:break-all}
+    a{color:#155eef;text-decoration:none}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <span class="badge">DEMO / TEST TOKEN</span>
+    <h1>Demo USD (DUSD)</h1>
+    <div class="muted">BEP-20 token dApp for Trust Wallet / EVM wallets.</div>
+    <button id="connect">Connect Trust Wallet</button>
+    <div id="status">Not connected.</div>
+  </div>
+
+  <div class="card">
+    <label>Contract address</label>
+    <input id="contract" placeholder="0x...">
+    <button class="secondary" id="load">Load Token</button>
+    <div id="tokenInfo" class="small"></div>
+  </div>
+
+  <div class="card">
+    <div class="muted">Connected wallet</div>
+    <div id="address" class="value">—</div>
+    <div class="row">
+      <div><div class="muted">DUSD balance</div><div id="balance" class="value">—</div></div>
+      <div><div class="muted">Total supply</div><div id="supply" class="value">—</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Send DUSD</h3>
+    <label>Recipient</label><input id="recipient" placeholder="0x...">
+    <label>Amount</label><input id="amount" type="number" min="0" step="any" placeholder="10">
+    <button id="send">Send DUSD</button>
+    <div id="tx" class="small"></div>
+  </div>
+
+  <div class="card">
+    <div class="muted">Network</div>
+    <div>BNB Smart Chain Testnet (recommended for testing)</div>
+    <div class="small" style="margin-top:8px">Chain ID: 97 • Native gas token: tBNB</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.15.0/dist/ethers.umd.min.js"></script>
+<script>
+const ABI = [
+ "function name() view returns (string)",
+ "function symbol() view returns (string)",
+ "function decimals() view returns (uint8)",
+ "function totalSupply() view returns (uint256)",
+ "function balanceOf(address) view returns (uint256)",
+ "function transfer(address,uint256) returns (bool)"
+];
+const TESTNET_CHAIN_ID = 97n;
+let provider, signer, account, token;
+
+const $ = id => document.getElementById(id);
+function setStatus(x){ $("status").textContent=x; }
+
+async function connect(){
+  if(!window.ethereum){
+    setStatus("No EVM wallet provider detected. Open this website inside Trust Wallet's dApp browser, or use a compatible EVM wallet.");
+    return;
+  }
+  try{
+    provider = new ethers.BrowserProvider(window.ethereum);
+    await provider.send("eth_requestAccounts",[]);
+    signer = await provider.getSigner();
+    account = await signer.getAddress();
+    const network = await provider.getNetwork();
+    $("address").textContent = account;
+    if(network.chainId !== TESTNET_CHAIN_ID){
+      setStatus("Connected, but the current network is not BNB Smart Chain Testnet (chain ID 97). Switch networks in your wallet.");
+    } else {
+      setStatus("Connected to BNB Smart Chain Testnet.");
+    }
+    await loadToken();
+  }catch(e){ setStatus("Connection failed: " + (e.shortMessage || e.message)); }
+}
+
+async function loadToken(){
+  const addr=$("contract").value.trim();
+  if(!ethers.isAddress(addr)){ $("tokenInfo").textContent="Enter a valid contract address."; return; }
+  if(!provider){ await connect(); if(!provider) return; }
+  try{
+    token = new ethers.Contract(addr,ABI,provider);
+    const [name,symbol,decimals,supply] = await Promise.all([
+      token.name(),token.symbol(),token.decimals(),token.totalSupply()
+    ]);
+    $("tokenInfo").textContent = `${name} (${symbol}) • ${decimals} decimals • Contract: ${addr}`;
+    $("supply").textContent = ethers.formatUnits(supply,decimals);
+    if(account){
+      const bal=await token.balanceOf(account);
+      $("balance").textContent=ethers.formatUnits(bal,decimals);
+    }
+  }catch(e){ $("tokenInfo").textContent="Could not read this contract: " + (e.shortMessage || e.message); }
+}
+
+async function send(){
+  if(!signer){ await connect(); if(!signer) return; }
+  const addr=$("contract").value.trim(), to=$("recipient").value.trim(), amount=$("amount").value.trim();
+  if(!ethers.isAddress(addr)||!ethers.isAddress(to)||!amount){ $("tx").textContent="Check contract, recipient and amount."; return; }
+  try{
+    const c=new ethers.Contract(addr,ABI,signer);
+    const decimals=await c.decimals();
+    const tx=await c.transfer(to,ethers.parseUnits(amount,decimals));
+    $("tx").textContent="Transaction submitted: " + tx.hash;
+    await tx.wait();
+    $("tx").textContent="Confirmed: " + tx.hash;
+    await loadToken();
+  }catch(e){ $("tx").textContent="Transaction failed: " + (e.shortMessage || e.message); }
+}
+$("connect").onclick=connect;
+$("load").onclick=loadToken;
+$("send").onclick=send;
+</script>
+</body>
+</html>
